@@ -35,13 +35,21 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.Storage = void 0;
 const fs = __importStar(require("fs"));
 class Storage {
-    constructor(path, tickInterval = 50) {
+    constructor(path, tickInterval = 100) {
         this.path = path;
+        this.tickInterval = tickInterval;
         this.state = {};
         this.hasChanged = false;
         this.exclusiveFlag = fs.constants.S_IRUSR | fs.constants.S_IWUSR | fs.constants.O_CREAT;
         this.requestPath = path + "_request";
-        setInterval(() => { this.tick(); }, tickInterval);
+        setTimeout(() => this.tick(), tickInterval);
+    }
+    Delete(key) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.requestAccess();
+            delete this.state[key];
+            this.hasChanged = true;
+        });
     }
     Set(key, value) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -56,12 +64,19 @@ class Storage {
             return this.state[key];
         });
     }
-    Lock(key, ttl = 100) {
+    Lock(key, ttl_ms = 10000) {
         return __awaiter(this, void 0, void 0, function* () {
+            yield this.requestAccess();
+            let lock = this.state[key];
+            if (lock && lock > Date.now())
+                throw new Error(`Key ${key} is already locked until ${lock}`);
+            this.state[key] = Date.now() + ttl_ms;
+            this.hasChanged = true;
         });
     }
     Unlock(key) {
         return __awaiter(this, void 0, void 0, function* () {
+            yield this.Delete(key);
         });
     }
     writeState() {
@@ -74,12 +89,15 @@ class Storage {
         });
     }
     readState() {
+        var _a;
         return __awaiter(this, void 0, void 0, function* () {
             yield this.requestAccess();
-            if (!this.file)
-                return;
-            let fileContents = (yield this.file.read()).buffer;
-            this.updateStateFromString(fileContents.toString());
+            let tempHandle = yield fs.promises.open(this.path, 'r+', this.exclusiveFlag);
+            (_a = this.file) === null || _a === void 0 ? void 0 : _a.close();
+            this.file = tempHandle;
+            let result = (yield tempHandle.read());
+            let fileContents = result.buffer;
+            this.updateStateFromString(fileContents.toString('utf-8', 0, result.bytesRead));
         });
     }
     requestAccess() {
@@ -87,8 +105,8 @@ class Storage {
             if (this.file)
                 return;
             return new Promise((resolve, _reject) => __awaiter(this, void 0, void 0, function* () {
-                let requestFileHandle = yield fs.promises.open(this.requestPath, 'w+', this.exclusiveFlag);
-                this.file = yield fs.promises.open(this.path, 'w+', this.exclusiveFlag);
+                let requestFileHandle = yield fs.promises.open(this.requestPath, 'a+', this.exclusiveFlag);
+                this.file = yield fs.promises.open(this.path, 'a+', this.exclusiveFlag);
                 yield requestFileHandle.close();
                 yield fs.promises.unlink(this.requestPath).catch((_err) => { });
                 yield this.readState();
@@ -105,19 +123,24 @@ class Storage {
     }
     tick() {
         return __awaiter(this, void 0, void 0, function* () {
-            if (!this.file)
-                return;
-            yield this.writeState();
-            let requestFileExists = !!(yield fs.promises.stat(this.requestPath).catch(_e => false));
-            if (requestFileExists)
-                yield this.yieldAccess();
+            try {
+                if (!this.file)
+                    return;
+                yield this.writeState();
+                let requestFileExists = !!(yield fs.promises.stat(this.requestPath).catch(_e => false));
+                if (requestFileExists)
+                    yield this.yieldAccess();
+            }
+            finally {
+                setTimeout(() => this.tick(), this.tickInterval);
+            }
         });
     }
     stateToString() {
         let keys = Object.keys(this.state);
         let parts = new Array(keys.length * 2);
         let i = 0;
-        for (let key in keys) {
+        for (let key of keys) {
             let value = this.state[key];
             let type = typeof value;
             switch (type) {
@@ -125,10 +148,10 @@ class Storage {
                     value = value ? 't' : 'f';
                     break;
                 case "string":
-                    value = '"' + value.replaceAll('\r\n\r', '\r\n');
+                    value = '"' + value.replaceAll('\n', '\\\n');
                     break;
                 case "object":
-                    value = 'n';
+                    value === null ? value = 'n' : value = 'o' + JSON.stringify(value);
                     break;
                 case "undefined":
                     value = 'u';
@@ -138,10 +161,10 @@ class Storage {
             parts[i + 1] = value;
             i += 2;
         }
-        return parts.join('\r\n\r');
+        return parts.join('\n');
     }
     updateStateFromString(state) {
-        let rows = state.split('\r\n\r');
+        let rows = state.split(/(?<!\\)(?:\\\\)*\n/);
         for (let i = 0; i < rows.length - 1; i += 2) {
             let value = rows[i + 1];
             switch (value[0]) {
@@ -154,11 +177,14 @@ class Storage {
                 case 'n':
                     value = null;
                     break;
+                case 'o':
+                    value = JSON.parse(value.substring(1));
+                    break;
                 case 'u':
                     value = undefined;
                     break;
                 case '"':
-                    value = value.substring(1);
+                    value = value.substring(1).replaceAll('\\\n', '\n');
                     break;
                 default:
                     value = +value;
