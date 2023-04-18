@@ -1,0 +1,14 @@
+{
+  "name": "persistent-schedule",
+  "version": "1.0.0",
+  "description": "A scheduler for Node.js that persists its state even when multithreaded or restarted",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "gudatr",
+  "license": "MIT",
+  "dependencies": {
+    "@types/node": "^18.15.11"
+  }
+}
