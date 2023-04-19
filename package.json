@@ -8,7 +8,10 @@
   },
   "author": "gudatr",
   "license": "MIT",
-  "dependencies": {
+  "devDependencies": {
     "@types/node": "^18.15.11"
+  },
+  "dependencies": {
+    "smol-storage": "github:gudatr/smol-storage"
   }
 }
